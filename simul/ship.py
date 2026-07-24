@@ -1,51 +1,54 @@
 import numpy as np
-from tensorflow.keras import layers, models, optimizers
-
-
 
 class ShipDynamics:
-    """선박의 추진 물리 및 조류 외란을 계산하는 물리 엔진 클래스"""
-    def __init__(self, x_init, y_init, hdg_init=0.0):
-        # 선박 위치 및 선수각(Heading)
-        self.x = x_init
-        self.y = y_init
-        self.hdg = np.radians(hdg_init) # 선수각 
+    """질량, 관성, 유체 항력을 고려한 3자유도 선박 동역학 모델"""
+    def __init__(self, L=10.0, B=3.0, m=2000.0, I_z=15000.0, A_R=1.5):
+        # 선박 제원 파라미터 
+        self.L = L
+        self.B = B
+        self.m = m
+        self.I_z = I_z
+        self.A_R = A_R
         
-        # 선박 고유 제원 및 성능 제약
-        self.max_steering = np.radians(35.0)  # 최대 타각 35도 [cite: 354]
-        self.max_stw = 28.0                  # 최대 대수속속력 (knots) [cite: 589]
-        self.stw = 10.0                      # 현재 대수속력 (물에 대한 선박 자체 속력)
-        
-        # 조류 영향으로 계산될 대지 침로 정보 
-        self.sog = 10.0                      # SOG 
-        self.cog = self.hdg                  # COG 
+        self.max_steering = np.radians(35.0)
+        self.reset(0.0, 0.0, 0.0)
 
-    def update_state(self, action, current_cx, current_cy, dt=1.0):
-        """Actor의 제어 명령과 현재 위치의 조류 벡터를 받아 다음 물리 상태로 업데이트"""
-        # action -> [steering_cmd, shifting_cmd] [-1, 1] 범위 수신 [cite: 353, 356]
-        steer_cmd = action[0] * self.max_steering
-        shift_cmd = action[1]  # 0~1 사이의 엔진 출력 비율 (Sigmoid 대응) [cite: 504]
-        
-        # 1. 선수각(HDG) 업데이트
-        self.hdg = (self.hdg + steer_cmd * dt) % (2 * np.pi)
-        
-        # 2. 선박 자체의 대수 속력(STW) 업데이트
-        self.stw = shift_cmd * self.max_stw
-        
-        # 3. 선박 자체의 추진 벡터 계산 (대수 속도 벡터)
-        ship_vx = self.stw * np.cos(self.hdg)
-        ship_vy = self.stw * np.sin(self.hdg)
-        
-        # 4. 외란 합성: 선박 추진 벡터 + 조류 외란 벡터 = 실제 이동 벡터 (대지 속도 벡터)
-        sog_vx = ship_vx + current_cx
-        sog_vy = ship_vy + current_cy
-        
-        # 5. 합성된 벡터로 실제 대지 속력(SOG) 및 대지 침로(COG) 도출 
-        self.sog = np.sqrt(sog_vx**2 + sog_vy**2)
-        self.cog = np.atan2(sog_vy, sog_vx) % (2 * np.pi)
-        
-        # 6. 실제 좌표 이동 (SOG 벡터 기준 이동) [cite: 11]
-        self.x += sog_vx * dt
-        self.y += sog_vy * dt
-        
-        return self.x, self.y, self.hdg, self.cog, self.sog, self.stw
+    def reset(self, x, y, hdg, u_init=5.0):
+        # 위치 및 상태 초기화
+        self.x, self.y, self.hdg = x, y, hdg
+        self.u = u_init  # 전진 속도 (Surge) 
+        self.v = 0.0     # 측면 밀림 속도 (Sway) 
+        self.r = 0.0     # 회전 속도 (Yaw Rate) 
+        self.delta_current = 0.0 # 현재 실제 타각 
+
+    def update_state(self, delta_target, V_c, psi_c, dt=0.5):
+        # 1. 조타기 지연 현상 (명령을 내려도 타가 서서히 꺾임)
+        T_e = 2.0 # 조타 시정수
+        self.delta_current += (delta_target - self.delta_current) / T_e * dt
+
+        # 2. 간략화된 3자유도 운동 방정식 (가속도 계산)
+        # 실제 해양공학의 복잡한 수식을 RL 훈련 속도에 맞춰 경량화한 모델
+        du = (-0.1 * self.u + 0.5) * dt  # 일정한 엔진 추력 가정
+        # 조류 방향(psi_c)과 배 방향(hdg)의 차이로 측면 밀림(Sway) 발생
+        dv = (-0.5 * self.v - self.u * self.r + 0.1 * V_c * np.sin(psi_c - self.hdg)) * dt
+        # 타각(delta)에 의한 회전력과 물의 저항(감쇠)
+        dr = (-0.5 * self.r + 0.05 * self.delta_current * (self.u**2)) * dt
+
+        # 속도 업데이트
+        self.u += du
+        self.v += dv
+        self.r += dr
+
+        # 3. 지구 고정 좌표계(위/경도)로 이동량 계산 (조류 속도 합성)
+        current_u = V_c * np.cos(psi_c - self.hdg)
+        current_v = V_c * np.sin(psi_c - self.hdg)
+
+        U_ground = (self.u + current_u) * np.cos(self.hdg) - (self.v + current_v) * np.sin(self.hdg)
+        V_ground = (self.u + current_u) * np.sin(self.hdg) + (self.v + current_v) * np.cos(self.hdg)
+
+        # 최종 위치 및 선수각 업데이트
+        self.x += U_ground * dt
+        self.y += V_ground * dt
+        self.hdg = (self.hdg + self.r * dt) % (2 * np.pi)
+
+        return self.x, self.y, self.hdg, self.u, self.v, self.r
