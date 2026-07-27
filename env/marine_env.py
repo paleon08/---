@@ -13,9 +13,11 @@ class MarineEnv:
         self.target_wp2 = np.array([800.0, 600.0])
         self.max_steps = 1000
         self.current_step = 0
+        self.prev_action = 0.0
 
     def reset(self):
         self.current_step = 0
+        self.prev_action = 0.0
         
         # [계획서 3단계] 에피소드마다 배의 제원과 조류를 무작위로 변경 
         self.ship = ShipDynamics(
@@ -62,6 +64,9 @@ class MarineEnv:
         
         # Action: AI가 내린 목표 타각 명령 [-1, 1] [cite: 2510]
         delta_target = action[0] * self.ship.max_steering
+
+        delta_diff = abs(action[0] - self.prev_action)
+        self.prev_action = action[0] # 다음 스텝 비교를 위해 현재 액션 저장
         
         # 환경 업데이트
         V_c, psi_c = self.ocean.get_current(self.ship.x, self.ship.y)
@@ -69,14 +74,14 @@ class MarineEnv:
         
         # 보상 및 다음 상태 도출
         next_state = self._get_state()
-        reward, done = self._calculate_reward(next_state)
+        reward, done = self._calculate_reward(next_state, delta_diff)
         
         if self.current_step >= self.max_steps:
             done = True
             
         return next_state, reward, done, {}
 
-    def _calculate_reward(self, state):
+    def _calculate_reward(self, state, delta_diff):
         e_track_real = state[0] * 100.0 # 실제 미터 단위 복원
         e_heading_real = state[1] * np.pi
         
@@ -94,6 +99,10 @@ class MarineEnv:
             done = True
         else:
             # 항로 중심에 붙을수록, 덜 흔들릴(r) 수록 좋은 점수 부여
-            reward = -abs(e_track_real)*0.01 - abs(e_heading_real)*0.1 - abs(self.ship.r)*0.5
+            path_reward = -abs(e_track_real)*0.01 - abs(e_heading_real)*0.1 - abs(self.ship.r)*0.5
+            # 타각 변화량(delta_diff)이 클수록 강력한 감점 부여 (가중치 5.0은 학습하며 조절 가능)
+            smoothness_penalty = delta_diff * 5.0  
             
+            # 최종 보상 = 기본 항로 유지 보상 - 타각 꺾임 패널티
+            reward = path_reward - smoothness_penalty
         return reward, done
