@@ -15,22 +15,34 @@ class MarineEnv:
         self.current_step = 0
         self.prev_action = 0.0
 
-    def reset(self):
-        self.current_step = 0
-        self.prev_action = 0.0
+    def reset(self, current_episode=1):
+        """에피소드 진행도(current_episode)에 따른 난이도 제어 (Curriculum Learning)"""
         
-        # [계획서 3단계] 에피소드마다 배의 제원과 조류를 무작위로 변경 
-        self.ship = ShipDynamics(
-            L=random.uniform(5.0, 20.0), 
-            B=random.uniform(2.0, 5.0),
-            m=random.uniform(1000, 5000)
-        )
-        self.ocean = OceanCurrentField(
-            V_c=random.uniform(0.5, 3.0), 
-            psi_c=random.uniform(0.0, 360.0)
-        )
-        
-        self.ship.reset(x=100.0, y=100.0, hdg=np.radians(45.0))
+        # 1단계: 초기 학습 (1~100 에피소드) - 고정 제원, 약한 조류
+        if current_episode <= 100:
+            ship_length = 15.0                     # L (m)
+            ship_mass = 2000.0                     # m (kg)
+            v_c = random.uniform(0.2, 0.8)         # V_c (m/s) 약한 조류
+            psi_c = random.uniform(0, 360)         # psi_c (degree)
+
+        # 2단계: 중급 학습 (101~300 에피소드) - 제원 소폭 무작위화, 중간 조류
+        elif current_episode <= 300:
+            ship_length = random.uniform(12.0, 18.0)
+            ship_mass = random.uniform(1500.0, 2500.0)
+            v_c = random.uniform(0.5, 1.8)         # V_c 중간 조류
+            psi_c = random.uniform(0, 360)
+
+        # 3단계: 고급/극한 학습 (301 에피소드 이상) - 전 범위 무작위화
+        else:
+            ship_length = random.uniform(5.0, 25.0) # L
+            ship_mass = random.uniform(800.0, 5000.0) # m
+            v_c = random.uniform(0.5, 3.0)          # V_c 강한 조류
+            psi_c = random.uniform(0, 360)
+
+        # 결정된 파라미터를 ShipDynamics 및 OceanCurrentField에 주입
+        self.ship.update_spec(length=ship_length, mass=ship_mass)
+        self.current_field.set_current(speed=v_c, direction=np.radians(psi_c))
+
         return self._get_state()
 
     def _get_state(self):
