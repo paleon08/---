@@ -3,6 +3,8 @@ import tensorflow as tf
 from tensorflow.keras import layers, models, optimizers
 import random
 from collections import deque
+import torch
+import os
 
 # 3.3.3절 행동 탐색 전략: OU 노이즈 [cite: 386, 393]
 class OUNoise:
@@ -192,3 +194,30 @@ class DDPGAgent:
         for i in range(len(critic_weights)):
             target_critic_weights[i] = tau * critic_weights[i] + (1 - tau) * target_critic_weights[i]
         self.target_critic.set_weights(target_critic_weights)
+
+    def save_models(self, save_dir="checkpoints"):
+        """학습된 Actor 및 Critic 신경망 가중치를 파일로 저장합니다."""
+        if not os.path.exists(save_dir):
+            os.makedirs(save_dir)
+            
+        torch.save(self.actor.state_dict(), os.path.join(save_dir, "actor.pth"))
+        torch.save(self.critic.state_dict(), os.path.join(save_dir, "critic.pth"))
+        torch.save(self.target_actor.state_dict(), os.path.join(save_dir, "target_actor.pth"))
+        torch.save(self.target_critic.state_dict(), os.path.join(save_dir, "target_critic.pth"))
+        print(f"[System] 성공적으로 가중치를 저장했습니다: {save_dir}/")
+
+    def load_models(self, save_dir="checkpoints"):
+        """저장된 신경망 가중치를 불러와 에이전트에 적용합니다."""
+        actor_path = os.path.join(save_dir, "actor.pth")
+        critic_path = os.path.join(save_dir, "critic.pth")
+        
+        if os.path.exists(actor_path) and os.path.exists(critic_path):
+            self.actor.load_state_dict(torch.load(actor_path))
+            self.critic.load_state_dict(torch.load(critic_path))
+            self.target_actor.load_state_dict(torch.load(actor_path))
+            self.target_critic.load_state_dict(torch.load(critic_path))
+            print(f"[System] 성공적으로 가중치를 불러왔습니다: {save_dir}/")
+            return True
+        else:
+            print(f"[Warning] 저장된 가중치 파일을 찾을 수 없습니다: {save_dir}/")
+            return False

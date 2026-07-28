@@ -1,40 +1,46 @@
-import numpy as np
+import time
 from env.marine_env import MarineEnv
-# 향후 model/DDPG.py에 네트워크들을 하나로 묶는 DDPGAgent 클래스를 만들고 임포트해야 해!
-# from model.DDPG import DDPGAgent 
+from model.DDPG import DDPGAgent
 
-def main():
-    print("🌊 자율주행 선박 강화학습 훈련을 시작합니다!")
-    
+def train():
     env = MarineEnv()
-    
-    # State 6차원, Action 1차원(타각 제어)
-    # agent = DDPGAgent(state_dim=6, action_dim=1) 
-    
-    episodes = 500
-    
-    for ep in range(episodes):
+    agent = DDPGAgent(state_dim=6, action_dim=1)
+
+    # 1. 기존 학습된 모델 가중치가 있으면 불러오기 (연속 업데이트 모드)
+    resume_training = True
+    if resume_training:
+        agent.load_models(save_dir="checkpoints")
+
+    max_episodes = 1000
+    for episode in range(max_episodes):
         state = env.reset()
-        total_reward = 0
+        episode_reward = 0
         done = False
-        step = 0
-        
+
         while not done:
-            # 1. AI가 현재 상태를 보고 행동(타각) 결정
-            # action = agent.get_action(state)
-            action = np.array([0.0]) # 일단 직진만 하는 더미 액션(테스트용)
+            # 실시간 추론 연산 지연(ms) 측정
+            start_time = time.time()
+            action = agent.get_action(state)
+            inference_time_ms = (time.time() - start_time) * 1000
+
+            # 환경 진행
+            next_state, reward, done, info = env.step(action)
             
-            # 2. 시뮬레이터 환경에 행동 투입 및 결과 확인
-            next_state, reward, done, _ = env.step(action)
-            
-            # 3. AI 학습 (경험 메모리 저장 및 가중치 업데이트)
-            # agent.train(state, action, reward, next_state, done)
-            
+            # 경험 저장 및 신경망 가중치 업데이트
+            agent.replay_buffer.add(state, action, reward, next_state, done)
+            agent.train()
+
             state = next_state
-            total_reward += reward
-            step += 1
-            
-        print(f"[Episode {ep+1}/{episodes}] Total Reward: {total_reward:.2f} | Steps: {step}")
+            episode_reward += reward
+
+        print(f"Episode: {episode+1} | Reward: {episode_reward:.2f} | Latency: {inference_time_ms:.2f}ms")
+
+        # 2. 100 에피소드마다 주기적 모델 가중치 저장
+        if (episode + 1) % 100 == 0:
+            agent.save_models(save_dir="checkpoints")
+
+    # 훈련 최종 종료 후 저장
+    agent.save_models(save_dir="checkpoints")
 
 if __name__ == "__main__":
-    main()
+    train()
