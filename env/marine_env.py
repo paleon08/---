@@ -41,7 +41,7 @@ class MarineEnv:
 
         # 결정된 파라미터를 ShipDynamics 및 OceanCurrentField에 주입
         self.ship.update_spec(length=ship_length, mass=ship_mass)
-        self.current_field.set_current(speed=v_c, direction=np.radians(psi_c))
+        self.ocean.set_current(speed=v_c, direction=np.radians(psi_c))
 
         return self._get_state()
 

@@ -52,3 +52,12 @@ class ShipDynamics:
         self.hdg = (self.hdg + self.r * dt) % (2 * np.pi)
 
         return self.x, self.y, self.hdg, self.u, self.v, self.r
+
+    def update_spec(self, length, mass):
+        """환경(env)에서 에피소드마다 배의 제원을 변경할 때 호출되는 함수"""
+        self.L = length
+        self.m = mass
+        
+        # 💡 물리 엔진 꿀팁: 배의 무게(m)와 길이(L)가 변하면 회전 관성(I_z)도 변해야 현실적이야!
+        # 직육면체 관성 모멘트 공식(1/12 * m * (L^2 + B^2))을 적용해서 AI가 더 정교한 물리법칙을 학습하게 해줄게.
+        self.I_z = (1.0 / 12.0) * self.m * (self.L**2 + self.B**2)
