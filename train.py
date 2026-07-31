@@ -34,7 +34,8 @@ def train():
             next_state, reward, done, info = env.step(action)
 
             # 경험 저장 및 학습
-            agent.replay_buffer.add(state, action, reward, next_state, done)
+            # 경험 저장 및 학습
+            agent.memory.store(state, action, reward, next_state, done)
             agent.train()
 
             # 오차 및 보상 누적

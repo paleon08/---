@@ -55,7 +55,7 @@ class MarineEnv:
         e_track = cross_prod / (np.linalg.norm(path_vector) + 1e-6)
         
         # 2. 각도 오차 (e_heading) 계산 
-        path_angle = np.atan2(path_vector[1], path_vector[0])
+        path_angle = np.arctan2(path_vector[1], path_vector[0])
         e_heading = path_angle - self.ship.hdg
         e_heading = (e_heading + np.pi) % (2 * np.pi) - np.pi # -pi ~ pi 정규화
 

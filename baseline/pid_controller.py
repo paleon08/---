@@ -1,57 +1,32 @@
 import numpy as np
 
 class PIDController:
-    def __init__(self, kp_track=0.015, ki_track=0.0001, kd_track=0.08,
-                 kp_heading=0.7, ki_heading=0.0005, kd_heading=0.15):
-        # 1. 항로 오차(Cross-track Error) PID 게인
-        self.kp_track = kp_track
-        self.ki_track = ki_track
-        self.kd_track = kd_track
-
-        # 2. 각도 오차(Heading Error) PID 게인
-        self.kp_heading = kp_heading
-        self.ki_heading = ki_heading
-        self.kd_heading = kd_heading
-
-        # 오차 누적 및 이전 오차 변수 초기화
-        self.reset()
+    # 👇 여기서 kp, ki, kd를 외부에서 받을 수 있게 세팅!
+    def __init__(self, kp=1.5, ki=0.01, kd=0.5):
+        self.kp = kp
+        self.ki = ki
+        self.kd = kd
+        self.integral = 0.0
+        self.prev_error = 0.0
+        self.max_steering = 1.0 # 정규화된 타각 [-1, 1]
 
     def reset(self):
-        """에피소드 reset 시 제어기 내부 오차 상태를 초기화합니다."""
-        self.integral_track = 0.0
-        self.prev_track_error = 0.0
-        self.integral_heading = 0.0
-        self.prev_heading_error = 0.0
+        self.integral = 0.0
+        self.prev_error = 0.0
 
-    def get_action(self, state):
-        """
-        Input state: [e_track, e_heading, u, v, r, delta_current]
-        Output: delta_target (범위 [-1, 1] 로 정규화된 타각 명령)
-        """
-        e_track = state[0]
-        e_heading = state[1]
-
-        # 항로 오차(e_track) PID 연산
-        self.integral_track += e_track
-        derivative_track = e_track - self.prev_track_error
-        self.prev_track_error = e_track
-
-        u_track = (self.kp_track * e_track + 
-                   self.ki_track * self.integral_track + 
-                   self.kd_track * derivative_track)
-
-        # 각도 오차(e_heading) PID 연산
-        self.integral_heading += e_heading
-        derivative_heading = e_heading - self.prev_heading_error
-        self.prev_heading_error = e_heading
-
-        u_heading = (self.kp_heading * e_heading + 
-                     self.ki_heading * self.integral_heading + 
-                     self.kd_heading * derivative_heading)
-
-        # 제어 명령 합산
-        steering_cmd = u_track + u_heading
-
-        # DDPG 액션 범위와 동일하게 [-1.0, 1.0]으로 제어값 클리핑
-        action = np.clip(steering_cmd, -1.0, 1.0)
-        return np.array([action], dtype=np.float32)
+    def get_action(self, state, explore=False):
+        # state[0] = 정규화된 항로 오차 (e_track)
+        # state[1] = 정규화된 각도 오차 (e_heading)
+        
+        # 단순화를 위해 위치 오차와 각도 오차를 결합하여 제어 에러 계산
+        error = -state[0] - state[1] 
+        
+        self.integral += error
+        derivative = error - self.prev_error
+        
+        # PID 제어 수식 계산
+        action = (self.kp * error) + (self.ki * self.integral) + (self.kd * derivative)
+        self.prev_error = error
+        
+        # Action을 배열 형태로 묶어서 반환 (DDPG와 형태를 맞추기 위함)
+        return np.array([np.clip(action, -self.max_steering, self.max_steering)], dtype=np.float32)

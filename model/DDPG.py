@@ -109,16 +109,18 @@ class DDPGAgent:
         self.actor_optimizer = optimizers.Adam(learning_rate=0.0001)
         self.critic_optimizer = optimizers.Adam(learning_rate=0.001)
 
-    def get_action(self, state, add_noise=True):
+    def get_action(self, state, explore=True):
         """현재 상태를 보고 타각 명령을 출력"""
         state_tensor = tf.expand_dims(tf.convert_to_tensor(state, dtype=tf.float32), 0)
         
-        # Actor 네트워크를 통과시켜 행동 도출 (우리는 일단 조타 1차원만 사용)
+        # Actor 네트워크를 통과시켜 행동 도출
         action = self.actor(state_tensor)[0].numpy()
         
         # 탐색(Exploration)을 위한 노이즈 추가
-        if add_noise:
-            action += self.noise.sample()
+        if explore:
+            # 1차원 조타에만 OU 노이즈를 추가
+            noise = self.noise.sample()
+            action[0] += noise[0] 
             
         # 조타 범위 [-1.0, 1.0] 클리핑
         return np.clip(action, -1.0, 1.0)
@@ -195,29 +197,40 @@ class DDPGAgent:
             target_critic_weights[i] = tau * critic_weights[i] + (1 - tau) * target_critic_weights[i]
         self.target_critic.set_weights(target_critic_weights)
 
+    # 텐서플로우 버전에 맞게 수정된 저장/불러오기 함수
     def save_models(self, save_dir="checkpoints"):
         """학습된 Actor 및 Critic 신경망 가중치를 파일로 저장합니다."""
         if not os.path.exists(save_dir):
             os.makedirs(save_dir)
             
-        torch.save(self.actor.state_dict(), os.path.join(save_dir, "actor.pth"))
-        torch.save(self.critic.state_dict(), os.path.join(save_dir, "critic.pth"))
-        torch.save(self.target_actor.state_dict(), os.path.join(save_dir, "target_actor.pth"))
-        torch.save(self.target_critic.state_dict(), os.path.join(save_dir, "target_critic.pth"))
-        print(f"[System] 성공적으로 가중치를 저장했습니다: {save_dir}/")
+        # TensorFlow Keras의 save_weights 메서드 사용
+        self.actor.save_weights(os.path.join(save_dir, "actor.weights.h5"))
+        self.critic.save_weights(os.path.join(save_dir, "critic.weights.h5"))
+        self.target_actor.save_weights(os.path.join(save_dir, "target_actor.weights.h5"))
+        self.target_critic.save_weights(os.path.join(save_dir, "target_critic.weights.h5"))
+        print(f" 💾 [System] 성공적으로 가중치를 저장했습니다: {save_dir}/")
 
     def load_models(self, save_dir="checkpoints"):
         """저장된 신경망 가중치를 불러와 에이전트에 적용합니다."""
-        actor_path = os.path.join(save_dir, "actor.pth")
-        critic_path = os.path.join(save_dir, "critic.pth")
+        actor_path = os.path.join(save_dir, "actor.weights.h5")
+        critic_path = os.path.join(save_dir, "critic.weights.h5")
+        
+        # 💡 [핵심 추가] 가중치를 덮어씌우기 전에 가짜(Dummy) 데이터를 통과시켜서 뼈대(Model Build)를 완성합니다!
+        dummy_state = tf.zeros((1, self.state_dim))
+        dummy_action = tf.zeros((1, self.action_dim))
+        self.actor(dummy_state)
+        self.critic(dummy_state, dummy_action)
+        self.target_actor(dummy_state)
+        self.target_critic(dummy_state, dummy_action)
+        # --------------------------------------------------------
         
         if os.path.exists(actor_path) and os.path.exists(critic_path):
-            self.actor.load_state_dict(torch.load(actor_path))
-            self.critic.load_state_dict(torch.load(critic_path))
-            self.target_actor.load_state_dict(torch.load(actor_path))
-            self.target_critic.load_state_dict(torch.load(critic_path))
-            print(f"[System] 성공적으로 가중치를 불러왔습니다: {save_dir}/")
+            self.actor.load_weights(actor_path)
+            self.critic.load_weights(critic_path)
+            self.target_actor.load_weights(actor_path)
+            self.target_critic.load_weights(critic_path)
+            print(f" 📂 [System] 성공적으로 가중치를 불러왔습니다: {save_dir}/")
             return True
         else:
-            print(f"[Warning] 저장된 가중치 파일을 찾을 수 없습니다: {save_dir}/")
+            print(f" ⚠️ [Warning] 저장된 가중치 파일을 찾을 수 없습니다: {save_dir}/")
             return False
