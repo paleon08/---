@@ -46,26 +46,23 @@ class ReplayBuffer:
         return len(self.buffer)
     
 
-# 3.3.2절 Actor 네트워크 객체 [cite: 338]
+# 3.3.2절 Actor 네트워크 객체
 class ActorNetwork(tf.keras.Model):
     def __init__(self):
         super(ActorNetwork, self).__init__()
-        # 은닉층 300, 600 유닛 [cite: 359]
+        # 은닉층 300, 600 유닛
         self.fc1 = layers.Dense(300, activation='relu')
         self.fc2 = layers.Dense(600, activation='relu')
         
-        # 출력층 분리 (논문 사양에 맞춰 활성화 함수 분리) [cite: 567]
-        self.steering_output = layers.Dense(1, activation='tanh') # 조타 [-1, 1] [cite: 377, 568]
-        self.shifting_output = layers.Dense(1, activation='sigmoid') # 속도증감 [0, 1] [cite: 569]
+        # 현재는 1차원 제어(조타)만 수행하므로 속도(shifting) 출력은 제거
+        self.steering_output = layers.Dense(1, activation='tanh') # 조타 [-1, 1]
 
     def call(self, state):
         x = self.fc1(state)
         x = self.fc2(x)
-        steering = self.steering_output(x)
-        shifting = self.shifting_output(x)
-        # 최종 두 행동을 결합하여 출력 [cite: 567]
-        return tf.concat([steering, shifting], axis=-1)
-
+        # 단일 행동(조타 각도)만 반환
+        return self.steering_output(x)
+    
 # 3.3.2절 Critic 네트워크 객체 [cite: 339]
 class CriticNetwork(tf.keras.Model):
     def __init__(self):
@@ -88,24 +85,31 @@ class DDPGAgent:
     def __init__(self, state_dim=6, action_dim=1):
         self.state_dim = state_dim
         self.action_dim = action_dim
-        self.gamma = 0.99  # 미래 보상 할인율
-        self.tau = 0.001   # 타겟 네트워크 소프트 업데이트 비율
+        self.gamma = 0.99 
+        self.tau = 0.001 
 
-        # 1. 경험 재플레이 메모리 및 OU 노이즈 초기화
         self.memory = ReplayBuffer(capacity=5000)
         self.noise = OUNoise(action_dimension=action_dim)
 
-        # 2. 본 네트워크(Main)와 타겟 네트워크(Target) 생성
         self.actor = ActorNetwork()
         self.target_actor = ActorNetwork()
         self.critic = CriticNetwork()
         self.target_critic = CriticNetwork()
 
-        # 네트워크 가중치를 동일하게 초기화
+        # 💡 [핵심 해결책] 텐서플로우가 나중에 헷갈리지 않게, 태어나자마자 강제로 뼈대를 완성시킵니다!
+        dummy_state = tf.zeros((1, self.state_dim))
+        dummy_action = tf.zeros((1, self.action_dim))
+        
+        self.actor(dummy_state)
+        self.target_actor(dummy_state)
+        self.critic(dummy_state, dummy_action)
+        self.target_critic(dummy_state, dummy_action)
+        # -----------------------------------------------------------------
+
+        # 이제 뼈대가 완벽하게 굳어졌으니, 가중치 초기화도 안전하게 진행됩니다.
         self.target_actor.set_weights(self.actor.get_weights())
         self.target_critic.set_weights(self.critic.get_weights())
 
-        # 3. 옵티마이저 설정 (논문 사양에 맞춘 학습률)
         self.actor_optimizer = optimizers.Adam(learning_rate=0.0001)
         self.critic_optimizer = optimizers.Adam(learning_rate=0.001)
 
@@ -214,21 +218,18 @@ class DDPGAgent:
         """저장된 신경망 가중치를 불러와 에이전트에 적용합니다."""
         actor_path = os.path.join(save_dir, "actor.weights.h5")
         critic_path = os.path.join(save_dir, "critic.weights.h5")
-        
-        # 💡 [핵심 추가] 가중치를 덮어씌우기 전에 가짜(Dummy) 데이터를 통과시켜서 뼈대(Model Build)를 완성합니다!
-        dummy_state = tf.zeros((1, self.state_dim))
-        dummy_action = tf.zeros((1, self.action_dim))
-        self.actor(dummy_state)
-        self.critic(dummy_state, dummy_action)
-        self.target_actor(dummy_state)
-        self.target_critic(dummy_state, dummy_action)
-        # --------------------------------------------------------
+        target_actor_path = os.path.join(save_dir, "target_actor.weights.h5")
+        target_critic_path = os.path.join(save_dir, "target_critic.weights.h5")
         
         if os.path.exists(actor_path) and os.path.exists(critic_path):
             self.actor.load_weights(actor_path)
             self.critic.load_weights(critic_path)
-            self.target_actor.load_weights(actor_path)
-            self.target_critic.load_weights(critic_path)
+            
+            if os.path.exists(target_actor_path):
+                self.target_actor.load_weights(target_actor_path)
+            if os.path.exists(target_critic_path):
+                self.target_critic.load_weights(target_critic_path)
+                
             print(f" 📂 [System] 성공적으로 가중치를 불러왔습니다: {save_dir}/")
             return True
         else:
